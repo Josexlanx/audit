@@ -41,7 +41,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -485, 0, 38)
 title.Position = UDim2.new(0, 12, 0, 6)
 title.BackgroundTransparency = 1
-title.Text = "ROBA UN HUEVO - CLIENT AUDIT v5"
+title.Text = "ROBA UN HUEVO - CLIENT AUDIT v6"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 18
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -496,26 +496,75 @@ local function uploadReport()
         responseBody = string.gsub(responseBody, "^%s+", "")
         responseBody = string.gsub(responseBody, "%s+$", "")
 
-        if tonumber(code) == 201 and string.match(responseBody, "^https?://") then
+        local function finishUploaded(url, serviceName)
             add("")
             add("===== REPORTE TEMPORAL SUBIDO =====")
-            add(responseBody)
+            add(url)
+            add("Servicio: " .. tostring(serviceName))
             add("Nota: cualquiera con este enlace puede leer el reporte.")
             refresh()
 
-            local copied = clipboard(responseBody)
+            local copied = clipboard(url)
             if copied then
-                status.Text = "SUBIDO. URL copiada: " .. responseBody
+                status.Text = "SUBIDO. URL copiada: " .. url
             else
-                status.Text = "SUBIDO: " .. responseBody
+                status.Text = "SUBIDO: " .. url
             end
 
             uploadButton.Text = "SUBIDO"
-        elseif tonumber(code) == 206 then
-            status.Text = "SUBIR: paste.rs acepto solo parte del reporte (HTTP 206). No usar ese enlace."
-            uploadButton.Text = "PARCIAL"
+        end
+
+        if tonumber(code) == 201 and string.match(responseBody, "^https?://") then
+            finishUploaded(responseBody, "paste.rs")
+            return
+        end
+
+        -- paste.rs puede devolver 500 por rate limit/servicio.
+        -- Si falla, usamos paste.centos.org como respaldo.
+        status.Text = "paste.rs fallo (HTTP " .. tostring(code) .. "). Probando respaldo..."
+
+        local function urlEncode(s)
+            return (string.gsub(s, "([^%w%-_%.~])", function(ch)
+                return string.format("%%%02X", string.byte(ch))
+            end))
+        end
+
+        local fallbackBody =
+            "private=1" ..
+            "&lang=text" ..
+            "&expire=1440" ..
+            "&title=" .. urlEncode("Roba un Huevo Audit") ..
+            "&text=" .. urlEncode(body)
+
+        local ok2, response2 = pcall(function()
+            return requestFn({
+                Url = "https://paste.centos.org/api/create",
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/x-www-form-urlencoded"
+                },
+                Body = fallbackBody
+            })
+        end)
+
+        if not ok2 then
+            status.Text = "SUBIR fallo en ambos servicios: " .. tostring(response2)
+            uploadButton.Text = "REINTENTAR"
+            return
+        end
+
+        local code2 = response2.StatusCode or response2.Status or response2.status_code or response2.status
+        local body2 = tostring(response2.Body or response2.body or "")
+        body2 = string.gsub(body2, "^%s+", "")
+        body2 = string.gsub(body2, "%s+$", "")
+
+        if tonumber(code2) and tonumber(code2) >= 200 and tonumber(code2) < 300 and string.match(body2, "^https?://") then
+            finishUploaded(body2, "paste.centos.org")
         else
-            status.Text = "SUBIR fallo HTTP " .. tostring(code) .. ": " .. string.sub(responseBody, 1, 180)
+            status.Text =
+                "SUBIR fallo. paste.rs HTTP " .. tostring(code) ..
+                " | respaldo HTTP " .. tostring(code2) ..
+                ": " .. string.sub(body2, 1, 160)
             uploadButton.Text = "REINTENTAR"
         end
     end)
