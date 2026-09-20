@@ -1,4 +1,4 @@
--- Roba un Huevo - Client Exposure Auditor v8
+-- Roba un Huevo - Client Exposure Auditor v9
 -- Read-only audit for your own Roblox experience.
 -- No FireServer / InvokeServer calls are made by this auditor.
 
@@ -99,7 +99,7 @@ local brand = Instance.new("TextLabel")
 brand.Size = UDim2.new(0,330,1,0)
 brand.Position = UDim2.new(0,18,0,0)
 brand.BackgroundTransparency = 1
-brand.Text = "EGG AUDIT  •  v8"
+brand.Text = "EGG AUDIT  •  v9"
 brand.TextColor3 = C.text
 brand.Font = Enum.Font.GothamBold
 brand.TextSize = 20
@@ -407,6 +407,47 @@ end
 local remotesBox = makeLogBox(remotesPage)
 local findingsBox = makeLogBox(findingsPage)
 local loggerBox = makeLogBox(loggerPage)
+loggerBox.Position = UDim2.new(0,18,0,122)
+loggerBox.Size = UDim2.new(1,-36,1,-136)
+
+local loggerToolbar = Instance.new("Frame")
+loggerToolbar.Size = UDim2.new(1,-36,0,38)
+loggerToolbar.Position = UDim2.new(0,18,0,76)
+loggerToolbar.BackgroundTransparency = 1
+loggerToolbar.Parent = loggerPage
+
+local function loggerButton(text, x, width, color)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0,width,0,34)
+    b.Position = UDim2.new(0,x,0,0)
+    b.BackgroundColor3 = color
+    b.TextColor3 = C.text
+    b.Text = text
+    b.TextSize = 12
+    b.Font = Enum.Font.GothamBold
+    b.AutoButtonColor = false
+    b.Parent = loggerToolbar
+    corner(b,9)
+    b.MouseEnter:Connect(function() tween(b,.12,{BackgroundTransparency=.12}) end)
+    b.MouseLeave:Connect(function() tween(b,.12,{BackgroundTransparency=0}) end)
+    return b
+end
+
+local pauseLoggerButton = loggerButton("PAUSAR",0,92,Color3.fromRGB(118,82,36))
+local copyLoggerButton = loggerButton("COPIAR LOGGER",100,126,C.accent)
+local clearLoggerButton = loggerButton("LIMPIAR",234,92,Color3.fromRGB(74,47,52))
+
+local loggerMiniStatus = Instance.new("TextLabel")
+loggerMiniStatus.Size = UDim2.new(1,-340,0,34)
+loggerMiniStatus.Position = UDim2.new(0,338,0,0)
+loggerMiniStatus.BackgroundColor3 = C.panel2
+loggerMiniStatus.TextColor3 = C.muted
+loggerMiniStatus.Text = "Captura activa • 0 líneas"
+loggerMiniStatus.TextSize = 11
+loggerMiniStatus.Font = Enum.Font.GothamMedium
+loggerMiniStatus.TextXAlignment = Enum.TextXAlignment.Left
+loggerMiniStatus.Parent = loggerToolbar
+corner(loggerMiniStatus,9)
 
 local exportCard = Instance.new("Frame")
 exportCard.Size = UDim2.new(1,-36,0,230)
@@ -421,7 +462,7 @@ local exportInfo = Instance.new("TextLabel")
 exportInfo.Size = UDim2.new(1,-28,0,54)
 exportInfo.Position = UDim2.new(0,14,0,14)
 exportInfo.BackgroundTransparency = 1
-exportInfo.Text = "El reporte puede ser grande. Copiar intentará usar el portapapeles del executor; Guardar TXT usa writefile si está disponible."
+exportInfo.Text = "La subida externa está bloqueada desde Delta (HTTP 403). Usa Copiar Todo, Copiar Logger o Guardar TXT."
 exportInfo.TextWrapped = true
 exportInfo.TextColor3 = C.muted
 exportInfo.Font = Enum.Font.Gotham
@@ -451,7 +492,7 @@ end
 
 local copyButton = actionButton(exportCard,"COPIAR TODO",0,C.accent)
 local saveButton = actionButton(exportCard,"GUARDAR TXT",.335,Color3.fromRGB(51,128,91))
-local uploadButton = actionButton(exportCard,"SUBIR (BETA)",.67,Color3.fromRGB(111,75,175))
+local uploadButton = actionButton(exportCard,"SUBIDA BLOQUEADA",.67,Color3.fromRGB(71,61,83))
 
 local exportStatus = Instance.new("TextLabel")
 exportStatus.Size = UDim2.new(1,-28,0,62)
@@ -471,6 +512,7 @@ local report = {}
 local remotesLines = {}
 local findingsLines = {}
 local loggerLines = {}
+local loggerPaused = false
 local counters = {objects=0, remotes=0, findings=0}
 local rootLines = {}
 
@@ -519,12 +561,22 @@ local function addFinding(line)
 end
 
 local function addLogger(line)
+    if loggerPaused then
+        return
+    end
+
     line = tostring(line)
     loggerLines[#loggerLines+1] = line
+
+    if #loggerLines > 1200 then
+        table.remove(loggerLines,1)
+    end
+
     add(line)
     stats["LOGGER"].Text = "ACTIVO"
     stats["LOGGER"].TextColor3 = C.green
     loggerBox.Text = table.concat(loggerLines,"\n")
+    loggerMiniStatus.Text = "Captura activa • "..tostring(#loggerLines).." líneas"
 end
 
 local keywords = {
@@ -656,6 +708,49 @@ local function clipboard(text)
     return false
 end
 
+pauseLoggerButton.MouseButton1Click:Connect(function()
+    loggerPaused = not loggerPaused
+
+    if loggerPaused then
+        pauseLoggerButton.Text = "REANUDAR"
+        pauseLoggerButton.BackgroundColor3 = Color3.fromRGB(45,112,78)
+        loggerMiniStatus.Text = "PAUSADO • "..tostring(#loggerLines).." líneas"
+        loggerMiniStatus.TextColor3 = C.amber
+    else
+        pauseLoggerButton.Text = "PAUSAR"
+        pauseLoggerButton.BackgroundColor3 = Color3.fromRGB(118,82,36)
+        loggerMiniStatus.Text = "Captura activa • "..tostring(#loggerLines).." líneas"
+        loggerMiniStatus.TextColor3 = C.muted
+    end
+end)
+
+copyLoggerButton.MouseButton1Click:Connect(function()
+    local text = table.concat(loggerLines,"\n")
+
+    if #text == 0 then
+        loggerMiniStatus.Text = "No hay eventos para copiar."
+        return
+    end
+
+    if clipboard(text) then
+        copyLoggerButton.Text = "COPIADO"
+        loggerMiniStatus.Text = "Logger copiado • "..tostring(#loggerLines).." líneas"
+        task.delay(1.5,function()
+            if copyLoggerButton and copyLoggerButton.Parent then
+                copyLoggerButton.Text = "COPIAR LOGGER"
+            end
+        end)
+    else
+        loggerMiniStatus.Text = "El clipboard del executor rechazó el logger."
+    end
+end)
+
+clearLoggerButton.MouseButton1Click:Connect(function()
+    table.clear(loggerLines)
+    loggerBox.Text = ""
+    loggerMiniStatus.Text = loggerPaused and "PAUSADO • 0 líneas" or "Captura activa • 0 líneas"
+end)
+
 local function saveReport()
     local text = fullReport()
     if type(writefile) ~= "function" then
@@ -686,47 +781,7 @@ end)
 saveButton.MouseButton1Click:Connect(saveReport)
 
 uploadButton.MouseButton1Click:Connect(function()
-    local requestFn = getHttpRequest()
-    if not requestFn then
-        exportStatus.Text = "Delta no expone request/http_request."
-        return
-    end
-
-    exportStatus.Text = "Intentando subida temporal..."
-    local body = string.gsub(fullReport(),"UserId:%s*%d+\n?","")
-
-    task.spawn(function()
-        local ok,res = pcall(function()
-            return requestFn({
-                Url="https://dpaste.org/api/",
-                Method="POST",
-                Headers={
-                    ["Content-Type"]="application/x-www-form-urlencoded",
-                    ["Accept"]="text/plain"
-                },
-                Body="format=url&expires=3600&lexer=text&content="..string.gsub(body,"([^%w%-_%.~])",function(ch)
-                    return string.format("%%%02X",string.byte(ch))
-                end)
-            })
-        end)
-
-        if not ok then
-            exportStatus.Text = "La subida falló: "..tostring(res)
-            return
-        end
-
-        local code = res.StatusCode or res.Status or res.status_code or res.status
-        local responseBody = tostring(res.Body or res.body or "")
-        responseBody = string.gsub(responseBody,"^%s+","")
-        responseBody = string.gsub(responseBody,"%s+$","")
-
-        if tonumber(code) and tonumber(code)>=200 and tonumber(code)<300 and string.match(responseBody,"^https?://") then
-            exportStatus.Text = "Subido: "..responseBody
-            clipboard(responseBody)
-        else
-            exportStatus.Text = "Subida no disponible (HTTP "..tostring(code).."). Usa Guardar TXT."
-        end
-    end)
+    exportStatus.Text = "La subida externa está siendo bloqueada con HTTP 403 desde Delta. Usa Guardar TXT o Copiar."
 end)
 
 local minimized = false
@@ -769,7 +824,7 @@ switchTab("overview")
 
 task.spawn(function()
     local ok,err = xpcall(function()
-        add("ROBA UN HUEVO - CLIENT EXPOSURE AUDIT v8")
+        add("ROBA UN HUEVO - CLIENT EXPOSURE AUDIT v9")
         add("PlaceId: "..tostring(game.PlaceId))
         add("JobId actual: "..tostring(game.JobId))
         add("")
