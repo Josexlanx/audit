@@ -38,10 +38,10 @@ frame.BorderSizePixel = 0
 frame.Parent = gui
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -260, 0, 38)
+title.Size = UDim2.new(1, -370, 0, 38)
 title.Position = UDim2.new(0, 12, 0, 6)
 title.BackgroundTransparency = 1
-title.Text = "ROBA UN HUEVO - CLIENT AUDIT v1"
+title.Text = "ROBA UN HUEVO - CLIENT AUDIT v2"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 18
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -59,10 +59,17 @@ status.Parent = frame
 
 local copyButton = Instance.new("TextButton")
 copyButton.Size = UDim2.new(0, 105, 0, 32)
-copyButton.Position = UDim2.new(1, -232, 0, 8)
+copyButton.Position = UDim2.new(1, -346, 0, 8)
 copyButton.Text = "COPIAR"
 copyButton.TextSize = 14
 copyButton.Parent = frame
+
+local saveButton = Instance.new("TextButton")
+saveButton.Size = UDim2.new(0, 105, 0, 32)
+saveButton.Position = UDim2.new(1, -232, 0, 8)
+saveButton.Text = "GUARDAR TXT"
+saveButton.TextSize = 13
+saveButton.Parent = frame
 
 local closeButton = Instance.new("TextButton")
 closeButton.Size = UDim2.new(0, 105, 0, 32)
@@ -128,44 +135,146 @@ local function safeFullName(obj)
 end
 
 local function clipboard(text)
-    local candidates = {
-        rawget(getgenv and getgenv() or _G, "setclipboard"),
-        rawget(getgenv and getgenv() or _G, "toclipboard")
-    }
+    local tried = {}
 
-    for _, fn in ipairs(candidates) do
-        if type(fn) == "function" then
-            local ok = pcall(fn, text)
-            if ok then
-                return true
-            end
+    local function tryFn(name, fn)
+        if type(fn) ~= "function" then
+            return false
+        end
+
+        tried[#tried + 1] = name
+        local ok = pcall(fn, text)
+        if ok then
+            return true, name
+        end
+        return false
+    end
+
+    local env = _G
+    if type(getgenv) == "function" then
+        local ok, value = pcall(getgenv)
+        if ok and type(value) == "table" then
+            env = value
         end
     end
 
-    if type(setclipboard) == "function" then
-        local ok = pcall(setclipboard, text)
-        if ok then return true end
+    local candidates = {
+        {"setclipboard", env.setclipboard},
+        {"toclipboard", env.toclipboard},
+        {"setrbxclipboard", env.setrbxclipboard},
+        {"writeclipboard", env.writeclipboard},
+        {"_G.setclipboard", _G.setclipboard},
+        {"_G.toclipboard", _G.toclipboard}
+    }
+
+    for _, item in ipairs(candidates) do
+        local ok, method = tryFn(item[1], item[2])
+        if ok then return true, method end
     end
 
-    if type(toclipboard) == "function" then
-        local ok = pcall(toclipboard, text)
-        if ok then return true end
+    local lowerClipboard = rawget(env, "clipboard")
+    if type(lowerClipboard) == "table" then
+        local ok, method = tryFn("clipboard.set", lowerClipboard.set)
+        if ok then return true, method end
+    end
+
+    local upperClipboard = rawget(env, "Clipboard")
+    if type(upperClipboard) == "table" then
+        local ok, method = tryFn("Clipboard.set", upperClipboard.set)
+        if ok then return true, method end
+    end
+
+    return false, table.concat(tried, ", ")
+end
+
+local copyChunk = 1
+local COPY_CHUNK_SIZE = 8000
+
+local function selectAllText()
+    pcall(function()
+        box:CaptureFocus()
+        box.CursorPosition = #box.Text + 1
+        box.SelectionStart = 1
+    end)
+end
+
+local function saveReport()
+    local text = table.concat(report, "\n")
+
+    if type(writefile) == "function" then
+        local ok, err = pcall(function()
+            writefile("RobaUnHuevo_Audit.txt", text)
+        end)
+
+        if ok then
+            status.Text = "Guardado: RobaUnHuevo_Audit.txt"
+            saveButton.Text = "GUARDADO"
+            task.delay(1.5, function()
+                if saveButton and saveButton.Parent then
+                    saveButton.Text = "GUARDAR TXT"
+                end
+            end)
+            return true
+        else
+            status.Text = "writefile fallo: " .. tostring(err)
+        end
+    else
+        status.Text = "Este executor no expone writefile"
     end
 
     return false
 end
 
+saveButton.MouseButton1Click:Connect(saveReport)
+
 copyButton.MouseButton1Click:Connect(function()
     local text = table.concat(report, "\n")
-    if clipboard(text) then
-        copyButton.Text = "COPIADO"
-    else
-        copyButton.Text = "SELECCIONA"
-        pcall(function() box:CaptureFocus() end)
+
+    if #text == 0 then
+        status.Text = "Todavia no hay resultados para copiar"
+        return
     end
 
-    task.delay(1.5, function()
-        if copyButton and copyButton.Parent then
+    local totalChunks = math.max(1, math.ceil(#text / COPY_CHUNK_SIZE))
+    if copyChunk > totalChunks then
+        copyChunk = 1
+    end
+
+    local first = ((copyChunk - 1) * COPY_CHUNK_SIZE) + 1
+    local last = math.min(copyChunk * COPY_CHUNK_SIZE, #text)
+    local chunk = string.sub(text, first, last)
+
+    local ok, method = clipboard(chunk)
+
+    if ok then
+        local copiedNow = copyChunk
+
+        if totalChunks == 1 then
+            copyButton.Text = "COPIADO"
+            status.Text = "Copiado con " .. tostring(method)
+        else
+            status.Text = string.format(
+                "Copiado bloque %d/%d con %s. Pegalo y pulsa COPIAR otra vez.",
+                copiedNow,
+                totalChunks,
+                tostring(method)
+            )
+
+            copyChunk += 1
+            if copyChunk > totalChunks then
+                copyChunk = 1
+            end
+
+            copyButton.Text = string.format("COPIAR %d/%d", copyChunk, totalChunks)
+        end
+    else
+        copyButton.Text = "SELECCIONADO"
+        status.Text = "Clipboard no disponible. Texto seleccionado; usa Copiar de Android."
+        selectAllText()
+    end
+
+    task.delay(1.8, function()
+        if copyButton and copyButton.Parent and totalChunks == 1 then
             copyButton.Text = "COPIAR"
         end
     end)
