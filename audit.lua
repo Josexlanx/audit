@@ -41,7 +41,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -370, 0, 38)
 title.Position = UDim2.new(0, 12, 0, 6)
 title.BackgroundTransparency = 1
-title.Text = "ROBA UN HUEVO - CLIENT AUDIT v2"
+title.Text = "ROBA UN HUEVO - CLIENT AUDIT v3"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 18
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -190,8 +190,8 @@ local function clipboard(text)
     return false, (#tried > 0 and table.concat(tried, ", ") or "ninguna API conocida detectada")
 end
 
-local copyChunk = 1
-local COPY_CHUNK_SIZE = 8000
+local COPY_FALLBACK_CHUNK_SIZE = 8000
+local fallbackChunk = 1
 
 local function selectAllText()
     pcall(function()
@@ -238,49 +238,52 @@ copyButton.MouseButton1Click:Connect(function()
         return
     end
 
-    local totalChunks = math.max(1, math.ceil(#text / COPY_CHUNK_SIZE))
-    if copyChunk > totalChunks then
-        copyChunk = 1
+    -- Primero intenta copiar TODO el reporte de una sola vez.
+    local ok, method = clipboard(text)
+    if ok then
+        copyButton.Text = "COPIADO TODO"
+        status.Text = "Reporte completo copiado con " .. tostring(method) .. " (" .. tostring(#text) .. " caracteres)"
+        fallbackChunk = 1
+
+        task.delay(1.8, function()
+            if copyButton and copyButton.Parent then
+                copyButton.Text = "COPIAR TODO"
+            end
+        end)
+        return
     end
 
-    local first = ((copyChunk - 1) * COPY_CHUNK_SIZE) + 1
-    local last = math.min(copyChunk * COPY_CHUNK_SIZE, #text)
+    -- Si el executor/portapapeles rechaza el texto completo, usa bloques como respaldo.
+    local totalChunks = math.max(1, math.ceil(#text / COPY_FALLBACK_CHUNK_SIZE))
+    if fallbackChunk > totalChunks then
+        fallbackChunk = 1
+    end
+
+    local first = ((fallbackChunk - 1) * COPY_FALLBACK_CHUNK_SIZE) + 1
+    local last = math.min(fallbackChunk * COPY_FALLBACK_CHUNK_SIZE, #text)
     local chunk = string.sub(text, first, last)
 
-    local ok, method = clipboard(chunk)
+    local okChunk, methodChunk = clipboard(chunk)
+    if okChunk then
+        local copiedNow = fallbackChunk
+        status.Text = string.format(
+            "No se pudo copiar todo. Copiado bloque %d/%d con %s.",
+            copiedNow,
+            totalChunks,
+            tostring(methodChunk)
+        )
 
-    if ok then
-        local copiedNow = copyChunk
-
-        if totalChunks == 1 then
-            copyButton.Text = "COPIADO"
-            status.Text = "Copiado con " .. tostring(method)
-        else
-            status.Text = string.format(
-                "Copiado bloque %d/%d con %s. Pegalo y pulsa COPIAR otra vez.",
-                copiedNow,
-                totalChunks,
-                tostring(method)
-            )
-
-            copyChunk += 1
-            if copyChunk > totalChunks then
-                copyChunk = 1
-            end
-
-            copyButton.Text = string.format("COPIAR %d/%d", copyChunk, totalChunks)
+        fallbackChunk += 1
+        if fallbackChunk > totalChunks then
+            fallbackChunk = 1
         end
+
+        copyButton.Text = string.format("BLOQUE %d/%d", fallbackChunk, totalChunks)
     else
         copyButton.Text = "SELECCIONADO"
-        status.Text = "Lua no expone clipboard (" .. tostring(method) .. "). Texto seleccionado para copiar manualmente."
+        status.Text = "Clipboard Lua no disponible. Texto seleccionado para copiar manualmente."
         selectAllText()
     end
-
-    task.delay(1.8, function()
-        if copyButton and copyButton.Parent and totalChunks == 1 then
-            copyButton.Text = "COPIAR"
-        end
-    end)
 end)
 
 task.spawn(function()
