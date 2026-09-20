@@ -1,4 +1,4 @@
--- Roba un Huevo - Client Exposure Auditor v9
+-- Roba un Huevo - Client Exposure Auditor v10
 -- Read-only audit for your own Roblox experience.
 -- No FireServer / InvokeServer calls are made by this auditor.
 
@@ -99,7 +99,7 @@ local brand = Instance.new("TextLabel")
 brand.Size = UDim2.new(0,330,1,0)
 brand.Position = UDim2.new(0,18,0,0)
 brand.BackgroundTransparency = 1
-brand.Text = "EGG AUDIT  •  v9"
+brand.Text = "EGG AUDIT  •  v10"
 brand.TextColor3 = C.text
 brand.Font = Enum.Font.GothamBold
 brand.TextSize = 20
@@ -433,13 +433,15 @@ local function loggerButton(text, x, width, color)
     return b
 end
 
-local pauseLoggerButton = loggerButton("PAUSAR",0,92,Color3.fromRGB(118,82,36))
-local copyLoggerButton = loggerButton("COPIAR LOGGER",100,126,C.accent)
-local clearLoggerButton = loggerButton("LIMPIAR",234,92,Color3.fromRGB(74,47,52))
+local pauseLoggerButton = loggerButton("PAUSAR",0,80,Color3.fromRGB(118,82,36))
+local copyLoggerButton = loggerButton("COPIAR",88,82,C.accent)
+local saveLoggerButton = loggerButton("GUARDAR",178,86,Color3.fromRGB(51,128,91))
+local selectLoggerButton = loggerButton("SELECC.",272,82,Color3.fromRGB(80,72,130))
+local clearLoggerButton = loggerButton("LIMPIAR",362,78,Color3.fromRGB(74,47,52))
 
 local loggerMiniStatus = Instance.new("TextLabel")
-loggerMiniStatus.Size = UDim2.new(1,-340,0,34)
-loggerMiniStatus.Position = UDim2.new(0,338,0,0)
+loggerMiniStatus.Size = UDim2.new(1,-452,0,34)
+loggerMiniStatus.Position = UDim2.new(0,452,0,0)
 loggerMiniStatus.BackgroundColor3 = C.panel2
 loggerMiniStatus.TextColor3 = C.muted
 loggerMiniStatus.Text = "Captura activa • 0 líneas"
@@ -513,6 +515,8 @@ local remotesLines = {}
 local findingsLines = {}
 local loggerLines = {}
 local loggerPaused = false
+local loggerCopyChunk = 1
+local LOGGER_COPY_CHUNK_SIZE = 1800
 local counters = {objects=0, remotes=0, findings=0}
 local rootLines = {}
 
@@ -560,6 +564,21 @@ local function addFinding(line)
     add(line)
 end
 
+local loggerSavePending = false
+local function autosaveLogger()
+    if loggerSavePending or type(writefile) ~= "function" then
+        return
+    end
+
+    loggerSavePending = true
+    task.delay(0.4,function()
+        loggerSavePending = false
+        pcall(function()
+            writefile("RobaUnHuevo_Logger.txt", table.concat(loggerLines,"\n"))
+        end)
+    end)
+end
+
 local function addLogger(line)
     if loggerPaused then
         return
@@ -577,6 +596,7 @@ local function addLogger(line)
     stats["LOGGER"].TextColor3 = C.green
     loggerBox.Text = table.concat(loggerLines,"\n")
     loggerMiniStatus.Text = "Captura activa • "..tostring(#loggerLines).." líneas"
+    autosaveLogger()
 end
 
 local keywords = {
@@ -732,21 +752,49 @@ copyLoggerButton.MouseButton1Click:Connect(function()
         return
     end
 
-    if clipboard(text) then
-        copyLoggerButton.Text = "COPIADO"
-        loggerMiniStatus.Text = "Logger copiado • "..tostring(#loggerLines).." líneas"
-        task.delay(1.5,function()
-            if copyLoggerButton and copyLoggerButton.Parent then
-                copyLoggerButton.Text = "COPIAR LOGGER"
-            end
-        end)
-    else
-        loggerMiniStatus.Text = "El clipboard del executor rechazó el logger."
+    local total = math.max(1, math.ceil(#text / LOGGER_COPY_CHUNK_SIZE))
+    if loggerCopyChunk > total then
+        loggerCopyChunk = 1
     end
+
+    local first = ((loggerCopyChunk - 1) * LOGGER_COPY_CHUNK_SIZE) + 1
+    local last = math.min(loggerCopyChunk * LOGGER_COPY_CHUNK_SIZE, #text)
+    local chunk = string.sub(text, first, last)
+
+    if clipboard(chunk) then
+        loggerMiniStatus.Text = "Copiado bloque "..loggerCopyChunk.."/"..total.." ("..#chunk.." chars)"
+        loggerCopyChunk += 1
+        if loggerCopyChunk > total then loggerCopyChunk = 1 end
+        copyLoggerButton.Text = total > 1 and ("COPIAR "..loggerCopyChunk.."/"..total) or "COPIAR"
+    else
+        loggerMiniStatus.Text = "Clipboard falló incluso con bloque pequeño."
+    end
+end)
+
+saveLoggerButton.MouseButton1Click:Connect(function()
+    if type(writefile) ~= "function" then
+        loggerMiniStatus.Text = "writefile no disponible."
+        return
+    end
+
+    local ok,err = pcall(function()
+        writefile("RobaUnHuevo_Logger.txt", table.concat(loggerLines,"\n"))
+    end)
+
+    loggerMiniStatus.Text = ok and "Guardado: RobaUnHuevo_Logger.txt" or ("Error guardando: "..tostring(err))
+end)
+
+selectLoggerButton.MouseButton1Click:Connect(function()
+    loggerBox:CaptureFocus()
+    loggerBox.CursorPosition = #loggerBox.Text + 1
+    loggerBox.SelectionStart = 1
+    loggerMiniStatus.Text = "Texto seleccionado. Usa copiar del sistema Android."
 end)
 
 clearLoggerButton.MouseButton1Click:Connect(function()
     table.clear(loggerLines)
+    loggerCopyChunk = 1
+    copyLoggerButton.Text = "COPIAR"
     loggerBox.Text = ""
     loggerMiniStatus.Text = loggerPaused and "PAUSADO • 0 líneas" or "Captura activa • 0 líneas"
 end)
@@ -824,7 +872,7 @@ switchTab("overview")
 
 task.spawn(function()
     local ok,err = xpcall(function()
-        add("ROBA UN HUEVO - CLIENT EXPOSURE AUDIT v9")
+        add("ROBA UN HUEVO - CLIENT EXPOSURE AUDIT v10")
         add("PlaceId: "..tostring(game.PlaceId))
         add("JobId actual: "..tostring(game.JobId))
         add("")
