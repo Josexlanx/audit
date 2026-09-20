@@ -41,7 +41,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -370, 0, 38)
 title.Position = UDim2.new(0, 12, 0, 6)
 title.BackgroundTransparency = 1
-title.Text = "ROBA UN HUEVO - CLIENT AUDIT v3"
+title.Text = "ROBA UN HUEVO - CLIENT AUDIT v4"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 18
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -132,6 +132,173 @@ local function safeFullName(obj)
         return obj:GetFullName()
     end)
     return ok and result or tostring(obj)
+end
+
+
+-- PASSIVE INBOUND LOGGER
+-- Observa solamente datos que el servidor ya envia al cliente.
+-- No llama FireServer ni InvokeServer.
+
+local watchWords = {
+    "eggworld",
+    "contentcreatorremotes",
+    "idlerescue",
+    "penroster",
+    "homestead",
+    "profilemirror",
+    "liveevents",
+    "server",
+    "job",
+    "egg",
+    "rarity"
+}
+
+local watchedEvents = {}
+local refreshPending = false
+
+local function scheduleRefresh()
+    if refreshPending then return end
+    refreshPending = true
+
+    task.delay(0.25, function()
+        refreshPending = false
+        refresh()
+    end)
+end
+
+local function shortValue(value, depth, seen)
+    depth = depth or 0
+    seen = seen or {}
+
+    if depth > 3 then
+        return "<max-depth>"
+    end
+
+    local kind = typeof(value)
+
+    if kind == "Instance" then
+        return "<" .. value.ClassName .. ":" .. safeFullName(value) .. ">"
+    elseif kind == "string" then
+        local s = value
+        if #s > 250 then
+            s = string.sub(s, 1, 250) .. "...<truncated>"
+        end
+        return string.format("%q", s)
+    elseif kind == "table" then
+        if seen[value] then
+            return "<cycle>"
+        end
+
+        seen[value] = true
+        local parts = {}
+        local n = 0
+
+        for k, v in pairs(value) do
+            n += 1
+            if n > 20 then
+                parts[#parts + 1] = "...<more>"
+                break
+            end
+
+            parts[#parts + 1] =
+                "[" .. shortValue(k, depth + 1, seen) .. "]=" ..
+                shortValue(v, depth + 1, seen)
+        end
+
+        seen[value] = nil
+        return "{" .. table.concat(parts, ", ") .. "}"
+    else
+        return tostring(value)
+    end
+end
+
+local function argsToText(...)
+    local packed = table.pack(...)
+    local parts = {}
+
+    for i = 1, packed.n do
+        parts[#parts + 1] = shortValue(packed[i], 0, {})
+    end
+
+    return "[" .. table.concat(parts, ", ") .. "]"
+end
+
+local function shouldWatch(obj)
+    local path = string.lower(safeFullName(obj))
+
+    for _, word in ipairs(watchWords) do
+        if string.find(path, word, 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function watchIncoming(remote)
+    if watchedEvents[remote] then
+        return
+    end
+
+    if not (remote:IsA("RemoteEvent") or remote:IsA("UnreliableRemoteEvent")) then
+        return
+    end
+
+    if not shouldWatch(remote) then
+        return
+    end
+
+    watchedEvents[remote] = true
+
+    local ok = pcall(function()
+        remote.OnClientEvent:Connect(function(...)
+            add("")
+            add("[PASSIVE IN] " .. safeFullName(remote))
+            add("ARGS = " .. argsToText(...))
+            scheduleRefresh()
+        end)
+    end)
+
+    if not ok then
+        watchedEvents[remote] = nil
+    end
+end
+
+local function logInterestingInstance(obj, reason)
+    if not shouldWatch(obj) then
+        return
+    end
+
+    add("")
+    add("[REPLICATED " .. reason .. "] " .. obj.ClassName .. " | " .. safeFullName(obj))
+
+    local okAttrs, attrs = pcall(function()
+        return obj:GetAttributes()
+    end)
+
+    if okAttrs and next(attrs) ~= nil then
+        add("ATTRS = " .. shortValue(attrs, 0, {}))
+    end
+
+    scheduleRefresh()
+end
+
+local workspaceWatchInstalled = false
+local function installWorkspaceWatch()
+    if workspaceWatchInstalled then return end
+    workspaceWatchInstalled = true
+
+    workspace.DescendantAdded:Connect(function(obj)
+        logInterestingInstance(obj, "ADD")
+    end)
+
+    workspace.DescendantRemoving:Connect(function(obj)
+        if shouldWatch(obj) then
+            add("")
+            add("[REPLICATED REMOVE] " .. obj.ClassName .. " | " .. safeFullName(obj))
+            scheduleRefresh()
+        end
+    end)
 end
 
 local function clipboard(text)
@@ -336,6 +503,8 @@ task.spawn(function()
                 if #remotes < MAX_REMOTES then
                     remotes[#remotes + 1] = obj.ClassName .. " | " .. safeFullName(obj)
                 end
+
+                watchIncoming(obj)
             end
 
             if interesting(obj.Name) then
@@ -425,12 +594,19 @@ task.spawn(function()
             add("... truncado. Total real: " .. attributeCount)
         end
 
+        add("")
+        add("===== PASSIVE LOGGER ACTIVO =====")
+        add("Observa RemoteEvents entrantes relacionados con huevos/servidores y objetos relevantes que aparezcan o desaparezcan en Workspace.")
+        add("No ejecuta ningun RemoteFunction ni RemoteEvent.")
+        add("Juega normalmente, abre interfaces y despues pulsa COPIAR TODO.")
+
+        installWorkspaceWatch()
+
         refresh()
         status.Text = string.format(
-            "TERMINADO | %d objetos | %d remotes | %d coincidencias",
+            "TERMINADO | %d objetos | %d remotes | LOGGER PASIVO ACTIVO",
             scanned,
-            remoteCount,
-            suspiciousCount + valueCount + attributeCount
+            remoteCount
         )
 
         local finalText = table.concat(report, "\n")
