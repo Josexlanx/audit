@@ -38,10 +38,10 @@ frame.BorderSizePixel = 0
 frame.Parent = gui
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -370, 0, 38)
+title.Size = UDim2.new(1, -485, 0, 38)
 title.Position = UDim2.new(0, 12, 0, 6)
 title.BackgroundTransparency = 1
-title.Text = "ROBA UN HUEVO - CLIENT AUDIT v4"
+title.Text = "ROBA UN HUEVO - CLIENT AUDIT v5"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 18
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -59,10 +59,17 @@ status.Parent = frame
 
 local copyButton = Instance.new("TextButton")
 copyButton.Size = UDim2.new(0, 105, 0, 32)
-copyButton.Position = UDim2.new(1, -346, 0, 8)
+copyButton.Position = UDim2.new(1, -460, 0, 8)
 copyButton.Text = "COPIAR"
 copyButton.TextSize = 14
 copyButton.Parent = frame
+
+local uploadButton = Instance.new("TextButton")
+uploadButton.Size = UDim2.new(0, 105, 0, 32)
+uploadButton.Position = UDim2.new(1, -346, 0, 8)
+uploadButton.Text = "SUBIR"
+uploadButton.TextSize = 13
+uploadButton.Parent = frame
 
 local saveButton = Instance.new("TextButton")
 saveButton.Size = UDim2.new(0, 105, 0, 32)
@@ -397,6 +404,125 @@ end
 
 saveButton.MouseButton1Click:Connect(saveReport)
 
+local function getHttpRequest()
+    local env = _G
+
+    if type(getgenv) == "function" then
+        local ok, value = pcall(getgenv)
+        if ok and type(value) == "table" then
+            env = value
+        end
+    end
+
+    local candidates = {
+        env.request,
+        env.http_request,
+        env.httprequest,
+        _G.request,
+        _G.http_request,
+        _G.httprequest
+    }
+
+    local synTable = rawget(env, "syn")
+    if type(synTable) == "table" then
+        candidates[#candidates + 1] = synTable.request
+    end
+
+    local httpTable = rawget(env, "http")
+    if type(httpTable) == "table" then
+        candidates[#candidates + 1] = httpTable.request
+    end
+
+    for _, fn in ipairs(candidates) do
+        if type(fn) == "function" then
+            return fn
+        end
+    end
+
+    return nil
+end
+
+local function makeUploadReport()
+    local text = table.concat(report, "\n")
+
+    -- Evita incluir identificadores personales si alguna version anterior
+    -- del reporte los agrego.
+    text = string.gsub(text, "UserId:%s*%d+\n?", "")
+
+    return text
+end
+
+local function uploadReport()
+    local requestFn = getHttpRequest()
+
+    if type(requestFn) ~= "function" then
+        status.Text = "SUBIR: Delta no expone request/http_request a Lua"
+        uploadButton.Text = "SIN HTTP"
+        return
+    end
+
+    local body = makeUploadReport()
+
+    if #body == 0 then
+        status.Text = "SUBIR: aun no hay reporte"
+        return
+    end
+
+    uploadButton.Text = "SUBIENDO..."
+    status.Text = "Subiendo reporte temporal a paste.rs..."
+
+    task.spawn(function()
+        local ok, response = pcall(function()
+            return requestFn({
+                Url = "https://paste.rs/",
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "text/plain; charset=utf-8"
+                },
+                Body = body
+            })
+        end)
+
+        if not ok then
+            status.Text = "SUBIR fallo: " .. tostring(response)
+            uploadButton.Text = "REINTENTAR"
+            return
+        end
+
+        local code = response.StatusCode or response.Status or response.status_code or response.status
+        local responseBody = response.Body or response.body or ""
+
+        responseBody = tostring(responseBody)
+        responseBody = string.gsub(responseBody, "^%s+", "")
+        responseBody = string.gsub(responseBody, "%s+$", "")
+
+        if tonumber(code) == 201 and string.match(responseBody, "^https?://") then
+            add("")
+            add("===== REPORTE TEMPORAL SUBIDO =====")
+            add(responseBody)
+            add("Nota: cualquiera con este enlace puede leer el reporte.")
+            refresh()
+
+            local copied = clipboard(responseBody)
+            if copied then
+                status.Text = "SUBIDO. URL copiada: " .. responseBody
+            else
+                status.Text = "SUBIDO: " .. responseBody
+            end
+
+            uploadButton.Text = "SUBIDO"
+        elseif tonumber(code) == 206 then
+            status.Text = "SUBIR: paste.rs acepto solo parte del reporte (HTTP 206). No usar ese enlace."
+            uploadButton.Text = "PARCIAL"
+        else
+            status.Text = "SUBIR fallo HTTP " .. tostring(code) .. ": " .. string.sub(responseBody, 1, 180)
+            uploadButton.Text = "REINTENTAR"
+        end
+    end)
+end
+
+uploadButton.MouseButton1Click:Connect(uploadReport)
+
 copyButton.MouseButton1Click:Connect(function()
     local text = table.concat(report, "\n")
 
@@ -458,7 +584,6 @@ task.spawn(function()
         add("ROBA UN HUEVO - CLIENT EXPOSURE AUDIT")
         add("PlaceId: " .. tostring(game.PlaceId))
         add("JobId actual: " .. tostring(game.JobId))
-        add("UserId: " .. tostring(player.UserId))
         add("")
         refresh()
 
