@@ -1,4 +1,4 @@
--- Roba un Huevo - Client Exposure Auditor v10
+-- Roba un Huevo - Client Exposure Auditor v11
 -- Read-only audit for your own Roblox experience.
 -- No FireServer / InvokeServer calls are made by this auditor.
 
@@ -99,7 +99,7 @@ local brand = Instance.new("TextLabel")
 brand.Size = UDim2.new(0,330,1,0)
 brand.Position = UDim2.new(0,18,0,0)
 brand.BackgroundTransparency = 1
-brand.Text = "EGG AUDIT  •  v10"
+brand.Text = "EGG AUDIT  •  v11"
 brand.TextColor3 = C.text
 brand.Font = Enum.Font.GothamBold
 brand.TextSize = 20
@@ -433,18 +433,19 @@ local function loggerButton(text, x, width, color)
     return b
 end
 
-local pauseLoggerButton = loggerButton("PAUSAR",0,80,Color3.fromRGB(118,82,36))
-local copyLoggerButton = loggerButton("COPIAR",88,82,C.accent)
-local saveLoggerButton = loggerButton("GUARDAR",178,86,Color3.fromRGB(51,128,91))
-local selectLoggerButton = loggerButton("SELECC.",272,82,Color3.fromRGB(80,72,130))
-local clearLoggerButton = loggerButton("LIMPIAR",362,78,Color3.fromRGB(74,47,52))
+local captureOneButton = loggerButton("CAPTURAR 1",0,92,Color3.fromRGB(90,72,150))
+local pauseLoggerButton = loggerButton("PAUSAR",100,76,Color3.fromRGB(118,82,36))
+local copyLastButton = loggerButton("ULTIMO",184,76,C.accent)
+local copy10Button = loggerButton("ULTIMOS 10",268,92,Color3.fromRGB(64,101,155))
+local saveLoggerButton = loggerButton("GUARDAR",368,82,Color3.fromRGB(51,128,91))
+local clearLoggerButton = loggerButton("LIMPIAR",458,76,Color3.fromRGB(74,47,52))
 
 local loggerMiniStatus = Instance.new("TextLabel")
-loggerMiniStatus.Size = UDim2.new(1,-452,0,34)
-loggerMiniStatus.Position = UDim2.new(0,452,0,0)
+loggerMiniStatus.Size = UDim2.new(1,-546,0,34)
+loggerMiniStatus.Position = UDim2.new(0,546,0,0)
 loggerMiniStatus.BackgroundColor3 = C.panel2
 loggerMiniStatus.TextColor3 = C.muted
-loggerMiniStatus.Text = "Captura activa • 0 líneas"
+loggerMiniStatus.Text = "Captura activa • 0 eventos"
 loggerMiniStatus.TextSize = 11
 loggerMiniStatus.Font = Enum.Font.GothamMedium
 loggerMiniStatus.TextXAlignment = Enum.TextXAlignment.Left
@@ -514,9 +515,9 @@ local report = {}
 local remotesLines = {}
 local findingsLines = {}
 local loggerLines = {}
+local loggerEvents = {}
 local loggerPaused = false
-local loggerCopyChunk = 1
-local LOGGER_COPY_CHUNK_SIZE = 1800
+local captureOne = false
 local counters = {objects=0, remotes=0, findings=0}
 local rootLines = {}
 
@@ -565,6 +566,7 @@ local function addFinding(line)
 end
 
 local loggerSavePending = false
+
 local function autosaveLogger()
     if loggerSavePending or type(writefile) ~= "function" then
         return
@@ -574,29 +576,53 @@ local function autosaveLogger()
     task.delay(0.4,function()
         loggerSavePending = false
         pcall(function()
-            writefile("RobaUnHuevo_Logger.txt", table.concat(loggerLines,"\n"))
+            writefile("RobaUnHuevo_Logger.txt", table.concat(loggerEvents,"\n\n"))
         end)
     end)
 end
 
-local function addLogger(line)
+local function refreshLoggerBox()
+    loggerLines = {}
+    for _,eventText in ipairs(loggerEvents) do
+        for line in string.gmatch(eventText.."\n","(.-)\n") do
+            loggerLines[#loggerLines+1] = line
+        end
+        loggerLines[#loggerLines+1] = ""
+    end
+
+    while #loggerLines > 700 do
+        table.remove(loggerLines,1)
+    end
+
+    loggerBox.Text = table.concat(loggerLines,"\n")
+    loggerMiniStatus.Text = (loggerPaused and "PAUSADO" or "Captura activa").." • "..tostring(#loggerEvents).." eventos"
+end
+
+local function addLoggerEvent(text)
     if loggerPaused then
         return
     end
 
-    line = tostring(line)
-    loggerLines[#loggerLines+1] = line
-
-    if #loggerLines > 1200 then
-        table.remove(loggerLines,1)
+    text = tostring(text)
+    loggerEvents[#loggerEvents+1] = text
+    if #loggerEvents > 200 then
+        table.remove(loggerEvents,1)
     end
 
-    add(line)
+    add(text)
     stats["LOGGER"].Text = "ACTIVO"
     stats["LOGGER"].TextColor3 = C.green
-    loggerBox.Text = table.concat(loggerLines,"\n")
-    loggerMiniStatus.Text = "Captura activa • "..tostring(#loggerLines).." líneas"
+    refreshLoggerBox()
     autosaveLogger()
+
+    if captureOne then
+        captureOne = false
+        loggerPaused = true
+        pauseLoggerButton.Text = "REANUDAR"
+        pauseLoggerButton.BackgroundColor3 = Color3.fromRGB(45,112,78)
+        captureOneButton.Text = "CAPTURADO"
+        loggerMiniStatus.Text = "CAPTURADO 1 EVENTO • pausado"
+    end
 end
 
 local keywords = {
@@ -675,9 +701,10 @@ local function watchIncoming(remote)
 
     local ok = pcall(function()
         remote.OnClientEvent:Connect(function(...)
-            addLogger("")
-            addLogger("[PASSIVE IN] "..safeFullName(remote))
-            addLogger("ARGS = "..argsToText(...))
+            addLoggerEvent(
+                "[PASSIVE IN] "..safeFullName(remote)..
+                "\nARGS = "..argsToText(...)
+            )
         end)
     end)
     if not ok then watchedEvents[remote] = nil end
@@ -690,17 +717,18 @@ local function installWorkspaceWatch()
 
     workspace.DescendantAdded:Connect(function(obj)
         if shouldWatch(obj) then
-            addLogger("")
-            addLogger("[REPLICATED ADD] "..obj.ClassName.." | "..safeFullName(obj))
+            local eventText = "[REPLICATED ADD] "..obj.ClassName.." | "..safeFullName(obj)
             local ok,attrs = pcall(function() return obj:GetAttributes() end)
-            if ok and next(attrs) ~= nil then addLogger("ATTRS = "..shortValue(attrs,0,{})) end
+            if ok and next(attrs) ~= nil then
+                eventText = eventText.."\nATTRS = "..shortValue(attrs,0,{})
+            end
+            addLoggerEvent(eventText)
         end
     end)
 
     workspace.DescendantRemoving:Connect(function(obj)
         if shouldWatch(obj) then
-            addLogger("")
-            addLogger("[REPLICATED REMOVE] "..obj.ClassName.." | "..safeFullName(obj))
+            addLoggerEvent("[REPLICATED REMOVE] "..obj.ClassName.." | "..safeFullName(obj))
         end
     end)
 end
@@ -728,46 +756,71 @@ local function clipboard(text)
     return false
 end
 
+captureOneButton.MouseButton1Click:Connect(function()
+    table.clear(loggerEvents)
+    table.clear(loggerLines)
+    loggerBox.Text = ""
+    loggerPaused = false
+    captureOne = true
+    pauseLoggerButton.Text = "PAUSAR"
+    pauseLoggerButton.BackgroundColor3 = Color3.fromRGB(118,82,36)
+    captureOneButton.Text = "ESPERANDO..."
+    loggerMiniStatus.Text = "Esperando el próximo evento relevante..."
+end)
+
 pauseLoggerButton.MouseButton1Click:Connect(function()
     loggerPaused = not loggerPaused
+    captureOne = false
+    captureOneButton.Text = "CAPTURAR 1"
 
     if loggerPaused then
         pauseLoggerButton.Text = "REANUDAR"
         pauseLoggerButton.BackgroundColor3 = Color3.fromRGB(45,112,78)
-        loggerMiniStatus.Text = "PAUSADO • "..tostring(#loggerLines).." líneas"
-        loggerMiniStatus.TextColor3 = C.amber
+        loggerMiniStatus.Text = "PAUSADO • "..tostring(#loggerEvents).." eventos"
     else
         pauseLoggerButton.Text = "PAUSAR"
         pauseLoggerButton.BackgroundColor3 = Color3.fromRGB(118,82,36)
-        loggerMiniStatus.Text = "Captura activa • "..tostring(#loggerLines).." líneas"
-        loggerMiniStatus.TextColor3 = C.muted
+        loggerMiniStatus.Text = "Captura activa • "..tostring(#loggerEvents).." eventos"
     end
 end)
 
-copyLoggerButton.MouseButton1Click:Connect(function()
-    local text = table.concat(loggerLines,"\n")
-
-    if #text == 0 then
+copyLastButton.MouseButton1Click:Connect(function()
+    if #loggerEvents == 0 then
         loggerMiniStatus.Text = "No hay eventos para copiar."
         return
     end
 
-    local total = math.max(1, math.ceil(#text / LOGGER_COPY_CHUNK_SIZE))
-    if loggerCopyChunk > total then
-        loggerCopyChunk = 1
+    local text = loggerEvents[#loggerEvents]
+    if clipboard(text) then
+        copyLastButton.Text = "COPIADO"
+        loggerMiniStatus.Text = "Último evento copiado ("..tostring(#text).." chars)"
+        task.delay(1.3,function()
+            if copyLastButton and copyLastButton.Parent then copyLastButton.Text = "ULTIMO" end
+        end)
+    else
+        loggerMiniStatus.Text = "Clipboard rechazó incluso el último evento."
+    end
+end)
+
+copy10Button.MouseButton1Click:Connect(function()
+    if #loggerEvents == 0 then
+        loggerMiniStatus.Text = "No hay eventos para copiar."
+        return
     end
 
-    local first = ((loggerCopyChunk - 1) * LOGGER_COPY_CHUNK_SIZE) + 1
-    local last = math.min(loggerCopyChunk * LOGGER_COPY_CHUNK_SIZE, #text)
-    local chunk = string.sub(text, first, last)
+    local from = math.max(1,#loggerEvents-9)
+    local tmp = {}
+    for i=from,#loggerEvents do tmp[#tmp+1] = loggerEvents[i] end
+    local text = table.concat(tmp,"\n\n")
 
-    if clipboard(chunk) then
-        loggerMiniStatus.Text = "Copiado bloque "..loggerCopyChunk.."/"..total.." ("..#chunk.." chars)"
-        loggerCopyChunk += 1
-        if loggerCopyChunk > total then loggerCopyChunk = 1 end
-        copyLoggerButton.Text = total > 1 and ("COPIAR "..loggerCopyChunk.."/"..total) or "COPIAR"
+    if clipboard(text) then
+        copy10Button.Text = "COPIADO"
+        loggerMiniStatus.Text = "Copiados "..tostring(#tmp).." eventos ("..tostring(#text).." chars)"
+        task.delay(1.3,function()
+            if copy10Button and copy10Button.Parent then copy10Button.Text = "ULTIMOS 10" end
+        end)
     else
-        loggerMiniStatus.Text = "Clipboard falló incluso con bloque pequeño."
+        loggerMiniStatus.Text = "Clipboard rechazó los últimos 10 eventos."
     end
 end)
 
@@ -778,25 +831,19 @@ saveLoggerButton.MouseButton1Click:Connect(function()
     end
 
     local ok,err = pcall(function()
-        writefile("RobaUnHuevo_Logger.txt", table.concat(loggerLines,"\n"))
+        writefile("RobaUnHuevo_Logger.txt", table.concat(loggerEvents,"\n\n"))
     end)
 
     loggerMiniStatus.Text = ok and "Guardado: RobaUnHuevo_Logger.txt" or ("Error guardando: "..tostring(err))
 end)
 
-selectLoggerButton.MouseButton1Click:Connect(function()
-    loggerBox:CaptureFocus()
-    loggerBox.CursorPosition = #loggerBox.Text + 1
-    loggerBox.SelectionStart = 1
-    loggerMiniStatus.Text = "Texto seleccionado. Usa copiar del sistema Android."
-end)
-
 clearLoggerButton.MouseButton1Click:Connect(function()
+    table.clear(loggerEvents)
     table.clear(loggerLines)
-    loggerCopyChunk = 1
-    copyLoggerButton.Text = "COPIAR"
     loggerBox.Text = ""
-    loggerMiniStatus.Text = loggerPaused and "PAUSADO • 0 líneas" or "Captura activa • 0 líneas"
+    captureOne = false
+    captureOneButton.Text = "CAPTURAR 1"
+    loggerMiniStatus.Text = loggerPaused and "PAUSADO • 0 eventos" or "Captura activa • 0 eventos"
 end)
 
 local function saveReport()
@@ -872,7 +919,7 @@ switchTab("overview")
 
 task.spawn(function()
     local ok,err = xpcall(function()
-        add("ROBA UN HUEVO - CLIENT EXPOSURE AUDIT v10")
+        add("ROBA UN HUEVO - CLIENT EXPOSURE AUDIT v11")
         add("PlaceId: "..tostring(game.PlaceId))
         add("JobId actual: "..tostring(game.JobId))
         add("")
@@ -960,9 +1007,11 @@ task.spawn(function()
         for _,line in ipairs(attributes) do addFinding(line) end
 
         installWorkspaceWatch()
-        addLogger("===== LOGGER PASIVO ACTIVO =====")
-        addLogger("Observando eventos entrantes y cambios replicados relacionados con huevos/servidores.")
-        addLogger("No se ejecutan remotes desde este auditor.")
+        addLoggerEvent(
+            "===== LOGGER PASIVO ACTIVO ====="..
+            "\nObservando eventos entrantes y cambios replicados relacionados con huevos/servidores."..
+            "\nNo se ejecutan remotes desde este auditor."
+        )
 
         refreshBoxes()
         status.Text = string.format("Terminado  •  %d objetos  •  %d remotes  •  logger activo",counters.objects,counters.remotes)
