@@ -158,13 +158,16 @@ local function clipboard(text)
         end
     end
 
+    local synTable = rawget(env, "syn")
     local candidates = {
         {"setclipboard", env.setclipboard},
         {"toclipboard", env.toclipboard},
         {"setrbxclipboard", env.setrbxclipboard},
         {"writeclipboard", env.writeclipboard},
         {"_G.setclipboard", _G.setclipboard},
-        {"_G.toclipboard", _G.toclipboard}
+        {"_G.toclipboard", _G.toclipboard},
+        {"syn.set_clipboard", type(synTable) == "table" and synTable.set_clipboard or nil},
+        {"syn.setclipboard", type(synTable) == "table" and synTable.setclipboard or nil}
     }
 
     for _, item in ipairs(candidates) do
@@ -184,7 +187,7 @@ local function clipboard(text)
         if ok then return true, method end
     end
 
-    return false, table.concat(tried, ", ")
+    return false, (#tried > 0 and table.concat(tried, ", ") or "ninguna API conocida detectada")
 end
 
 local copyChunk = 1
@@ -269,7 +272,7 @@ copyButton.MouseButton1Click:Connect(function()
         end
     else
         copyButton.Text = "SELECCIONADO"
-        status.Text = "Clipboard no disponible. Texto seleccionado; usa Copiar de Android."
+        status.Text = "Lua no expone clipboard (" .. tostring(method) .. "). Texto seleccionado para copiar manualmente."
         selectAllText()
     end
 
